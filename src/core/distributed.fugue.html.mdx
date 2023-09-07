@@ -1,0 +1,182 @@
+---
+description: The computational efficiency of `StatsForecast` can be tracked to its
+  two core components:<br>1. Its `models` written in NumBa that optimizes Python code
+  to reach C speeds.<br>2. Its `core.StatsForecast` class that enables distributed
+  computing.<br><br>Here we use [Fugue](https://github.com/fugue-project/fugue) which
+  is a unified interface for `Dask` and `Spark`.<br><br>
+output-file: distributed.fugue.html
+title: FugueBackend
+
+---
+
+```python
+from statsforecast.core import StatsForecast
+from statsforecast.models import ( 
+    AutoARIMA,
+    AutoETS,
+)
+from statsforecast.utils import generate_series
+
+n_series = 4
+horizon = 7
+
+series = generate_series(n_series)
+
+sf = StatsForecast(
+    models=[AutoETS(season_length=7)],
+    freq='D',
+)
+
+sf.cross_validation(df=series, h=horizon, step_size = 24,
+    n_windows = 2, level=[90]).head()
+```
+
+|           | ds         | cutoff     | y        | AutoETS  | AutoETS-lo-90 | AutoETS-hi-90 |
+|-----------|------------|------------|----------|----------|---------------|---------------|
+| unique_id |            |            |          |          |               |               |
+| 0         | 2000-07-10 | 2000-07-09 | 2.472186 | 2.264802 | 2.029021      | 2.500583      |
+| 0         | 2000-07-11 | 2000-07-09 | 3.369775 | 3.207784 | 2.972003      | 3.443565      |
+| 0         | 2000-07-12 | 2000-07-09 | 4.245229 | 4.248131 | 4.012350      | 4.483912      |
+| 0         | 2000-07-13 | 2000-07-09 | 5.113708 | 5.267366 | 5.031586      | 5.503148      |
+| 0         | 2000-07-14 | 2000-07-09 | 6.127178 | 6.203136 | 5.967356      | 6.438918      |
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+
+# Make unique_id a column
+series = series.reset_index()
+series['unique_id'] = series['unique_id'].astype(str)
+
+# Convert to Spark
+sdf = spark.createDataFrame(series)
+
+# Returns a Spark DataFrame
+sf.cross_validation(df=sdf, h=horizon, step_size = 24,
+    n_windows = 2, level=[90]).show()
+```
+
+``` text
++---------+-------------------+-------------------+----------+----------+-------------+-------------+
+|unique_id|                 ds|             cutoff|         y|   AutoETS|AutoETS-lo-90|AutoETS-hi-90|
++---------+-------------------+-------------------+----------+----------+-------------+-------------+
+|        0|2000-07-10 00:00:00|2000-07-09 00:00:00|  2.472186| 2.2648022|     2.029021|    2.5005832|
+|        0|2000-07-11 00:00:00|2000-07-09 00:00:00| 3.3697753| 3.2077837|    2.9720025|    3.4435647|
+|        0|2000-07-12 00:00:00|2000-07-09 00:00:00| 4.2452292|  4.248131|      4.01235|     4.483912|
+|        0|2000-07-13 00:00:00|2000-07-09 00:00:00| 5.1137075| 5.2673664|    5.0315857|    5.5031476|
+|        0|2000-07-14 00:00:00|2000-07-09 00:00:00|  6.127178| 6.2031364|    5.9673557|    6.4389176|
+|        0|2000-07-15 00:00:00|2000-07-09 00:00:00|0.02901458|0.29491338|   0.05913232|    0.5306944|
+|        0|2000-07-16 00:00:00|2000-07-09 00:00:00| 1.2172083| 1.2661165|    1.0303354|    1.5018975|
+|        0|2000-08-03 00:00:00|2000-08-02 00:00:00|  5.191732|  5.262299|     5.024893|    5.4997053|
+|        0|2000-08-04 00:00:00|2000-08-02 00:00:00| 6.2941585|  6.193887|     5.956481|     6.431294|
+|        0|2000-08-05 00:00:00|2000-08-02 00:00:00| 0.4155242|0.27708933|  0.039682955|   0.51449573|
+|        0|2000-08-06 00:00:00|2000-08-02 00:00:00| 1.3144909| 1.2614795|     1.024073|    1.4988859|
+|        0|2000-08-07 00:00:00|2000-08-02 00:00:00| 2.4363253| 2.2563472|    2.0189407|    2.4937534|
+|        0|2000-08-08 00:00:00|2000-08-02 00:00:00|  3.136771| 3.2256677|    2.9882612|     3.463074|
+|        0|2000-08-09 00:00:00|2000-08-02 00:00:00| 4.3990235| 4.2520094|     4.014603|    4.4894156|
+|        1|2000-03-07 00:00:00|2000-03-06 00:00:00| 1.1842923| 1.1227854|   0.88283557|    1.3627354|
+|        1|2000-03-08 00:00:00|2000-03-06 00:00:00| 2.0684502| 2.3335178|     2.093568|    2.5734677|
+|        1|2000-03-09 00:00:00|2000-03-06 00:00:00|  3.411059|  3.249278|    3.0093281|    3.4892278|
+|        1|2000-03-10 00:00:00|2000-03-06 00:00:00|  4.094924| 4.3513813|    4.1114316|    4.5913315|
+|        1|2000-03-11 00:00:00|2000-03-06 00:00:00| 5.2556596| 5.2070827|     4.967133|     5.447033|
+|        1|2000-03-12 00:00:00|2000-03-06 00:00:00| 6.1121583|   6.28834|      6.04839|      6.52829|
++---------+-------------------+-------------------+----------+----------+-------------+-------------+
+only showing top 20 rows
+```
+
+------------------------------------------------------------------------
+
+<a
+href="https://github.com/Nixtla/statsforecast/blob/main/statsforecast/distributed/fugue.py#L48"
+target="_blank" style="float:right; font-size:smaller">source</a>
+
+### FugueBackend
+
+> ``` text
+>  FugueBackend (engine:Any=None, conf:Any=None, **transform_kwargs:Any)
+> ```
+
+FugueBackend for Distributed Computation. [Source
+code](https://github.com/Nixtla/statsforecast/blob/main/statsforecast/distributed/fugue.py).
+
+This class uses [Fugue](https://github.com/fugue-project/fugue) backend
+capable of distributing computation on Spark, Dask and Ray without any
+rewrites.
+
+**Parameters:**<br> `engine`: fugue.ExecutionEngine, a selection between
+Spark, Dask, and Ray.<br> `conf`: fugue.Config, engine
+configuration.<br> `**transform_kwargs`: additional kwargs for Fugue’s
+transform method.<br>
+
+**Notes:**<br> A short introduction to Fugue, with examples on how to
+scale pandas code to Spark, Dask or Ray is available
+[here](https://fugue-tutorials.readthedocs.io/tutorials/quick_look/ten_minutes.html).
+
+## Dask Distributed Predictions
+
+Here we provide an example for the distribution of the
+[`StatsForecast`](https://Nixtla.github.io/statsforecast/src/core/core.html#statsforecast)
+predictions using `Fugue` to execute the code in a Dask cluster.
+
+To do it we instantiate the
+[`FugueBackend`](https://Nixtla.github.io/statsforecast/src/core/distributed.fugue.html#fuguebackend)
+class with a `DaskExecutionEngine`.
+
+```python
+import dask.dataframe as dd
+from dask.distributed import Client
+from fugue_dask import DaskExecutionEngine
+from statsforecast import StatsForecast
+from statsforecast.models import Naive
+from statsforecast.utils import generate_series
+
+# Generate Synthetic Panel Data
+df = generate_series(10).reset_index()
+df['unique_id'] = df['unique_id'].astype(str)
+df = dd.from_pandas(df, npartitions=10)
+
+# Instantiate FugueBackend with DaskExecutionEngine
+dask_client = Client()
+engine = DaskExecutionEngine(dask_client=dask_client)
+```
+
+We have simply create the class to the usual
+[`StatsForecast`](https://Nixtla.github.io/statsforecast/src/core/core.html#statsforecast)
+instantiation.
+
+```python
+sf = StatsForecast(models=[Naive()], freq='D')
+```
+
+### Distributed Forecast
+
+For extremely fast distributed predictions we use FugueBackend as
+backend that operates like the original
+[StatsForecast.forecast](https://nixtla.github.io/statsforecast/core.html#statsforecast.forecast)
+method.
+
+It receives as input a pandas.DataFrame with columns
+\[`unique_id`,`ds`,`y`\] and exogenous, where the `ds` (datestamp)
+column should be of a format expected by Pandas. The `y` column must be
+numeric, and represents the measurement we wish to forecast. And the
+`unique_id` uniquely identifies the series in the panel data.
+
+```python
+# Distributed predictions with FugueBackend.
+sf.forecast(df=df, h=12).compute()
+```
+
+### Distributed Cross-Validation
+
+For extremely fast distributed temporcal cross-validation we use
+[`cross_validation`](https://Nixtla.github.io/statsforecast/src/distributed.utils.html#cross_validation)
+method that operates like the original
+[StatsForecast.cross_validation](https://nixtla.github.io/statsforecast/core.html#statsforecast)
+method.
+
+```python
+# Distributed cross-validation with FugueBackend.
+sf.cross_validation(df=df, h=12, n_windows=2).compute()
+```
+
